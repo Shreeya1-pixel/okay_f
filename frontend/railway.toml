@@ -1,0 +1,13 @@
+# Railway config for the frontend service (geotrade-web)
+# In Railway service settings → Config-as-code path: /frontend/railway.toml
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/Dockerfile.frontend"
+
+[deploy]
+startCommand = "/start_frontend.sh"
+healthcheckPath = "/"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

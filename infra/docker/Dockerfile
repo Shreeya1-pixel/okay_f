@@ -21,15 +21,15 @@ RUN pip install -e "."
 # Download spaCy model
 RUN python -m spacy download en_core_web_sm
 
-# ---- API target ----
+# ---- Worker target (build with: --target worker) ----
+FROM base AS worker
+COPY . .
+RUN chmod +x scripts/start_api.sh scripts/start_worker.sh scripts/start_beat.sh
+CMD ["./scripts/start_worker.sh"]
+
+# ---- API target (default final stage for Railway/Render) ----
 FROM base AS api
 COPY . .
 RUN chmod +x scripts/start_api.sh scripts/start_worker.sh scripts/start_beat.sh
 EXPOSE 8000
 CMD ["./scripts/start_api.sh"]
-
-# ---- Worker target ----
-FROM base AS worker
-COPY . .
-RUN chmod +x scripts/start_api.sh scripts/start_worker.sh scripts/start_beat.sh
-CMD ["./scripts/start_worker.sh"]

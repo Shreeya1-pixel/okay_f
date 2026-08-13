@@ -1,0 +1,13 @@
+# Railway config for the API service (geotrade-api)
+# In Railway service settings → Config-as-code path: /railway.toml
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/Dockerfile"
+
+[deploy]
+startCommand = "./scripts/start_api.sh"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

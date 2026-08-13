@@ -1,73 +1,93 @@
-# Deploy GeoTrade (all on Render)
+# Deploy GeoTrade on Railway (frontend + backend)
 
-Frontend + API + workers + Postgres + Redis on **[Render](https://render.com)**.
+This monorepo needs **two services** (Railpack auto-detect fails at repo root).
 
-| Service | Name | Role | Create via |
-|---------|------|------|------------|
-| Web | `geotrade-web` | Vite frontend (nginx) | **Web Service** (Docker) |
-| Web | `geotrade-api` | FastAPI | **Web Service** (Docker) |
-| Worker | `geotrade-worker` | Celery jobs | **Background Worker** |
-| Worker | `geotrade-beat` | Celery scheduler | **Background Worker** |
-| Redis | `geotrade-redis` | Cache + queue | **Key Value** |
-| Postgres | `geotrade-db` | Database | **Postgres** |
-
-You can use **Blueprint** (`render.yaml`) *or* create each service manually (same result; Blueprint is not required).
+Repo: your GitHub fork (e.g. `Shreeya1-pixel/okay_f`).
 
 ---
 
-## Manual deploy (recommended if skipping Blueprint)
+## 1. Create project + databases
 
-1. **Postgres** → name `geotrade-db`
-2. **Key Value** → name `geotrade-redis`
-3. **Web Service** `geotrade-api`
-   - Repo: your GitHub fork
-   - Runtime: Docker · Dockerfile: `infra/docker/Dockerfile`
-   - Docker command: `./scripts/start_api.sh`
-   - Health check: `/health`
-   - Env: wire `DATABASE_URL` / `DATABASE_SYNC_URL` from Postgres, Redis URLs from Key Value, set `APP_ENV=production`, paste market API keys
-4. **Background Worker** `geotrade-worker` — same Dockerfile, command `./scripts/start_worker.sh`, same env/keys
-5. **Background Worker** `geotrade-beat` — command `./scripts/start_beat.sh`, DB + Redis env
-6. **Web Service** `geotrade-web`
-   - Dockerfile: `infra/docker/Dockerfile.frontend`
-   - Env: `VITE_API_URL=https://<your-api-host>/api/v1`
-7. Set API `FRONTEND_URL=https://<your-web-host>`
-
-### Required secret env vars (API + worker)
-
-`ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `TWELVEDATA_API_KEY`, `FINNHUB_API_KEY`, `FRED_API_KEY`, `ALPHAVANTAGE_API_KEY`, `NEWSAPI_KEY`
+1. [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub** → `okay_f`
+2. Delete/ignore the failed auto service if Railpack already failed once.
+3. **+ New** → **Database** → **PostgreSQL**
+4. **+ New** → **Database** → **Redis**
 
 ---
 
-## Blueprint path (optional)
+## 2. Backend API service
 
-1. Push this repo to GitHub.
-2. Render → **New → Blueprint** → select the repo → Apply.
-3. Fill `sync: false` secrets when prompted.
+**+ New** → **GitHub Repo** → same `okay_f` (or rename the failed service).
 
-### If Render adds a random URL suffix
+### Settings
+| Setting | Value |
+|---------|--------|
+| Config-as-code path | `/railway.toml` |
+| (or) Builder | Dockerfile |
+| Dockerfile path | `infra/docker/Dockerfile` |
+| Custom start command | `./scripts/start_api.sh` |
+| Health check path | `/health` |
 
-1. Copy the real API URL.
-2. On `geotrade-web` set env `VITE_API_URL=https://<real-api-host>/api/v1` → clear cache & redeploy.
-3. On `geotrade-api` set `FRONTEND_URL=https://<real-web-host>`.
+### Variables (API)
+Link Postgres + Redis from the Variable UI (“Add variable reference”), then add:
 
-CORS already allows `*.onrender.com`.
+```
+APP_ENV=production
+ENV=production
+WEB_CONCURRENCY=1
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+DATABASE_SYNC_URL=${{Postgres.DATABASE_URL}}
+REDIS_URL=${{Redis.REDIS_URL}}
+CELERY_BROKER_URL=${{Redis.REDIS_URL}}
+CELERY_RESULT_BACKEND=${{Redis.REDIS_URL}}
+ALPACA_API_KEY=...
+ALPACA_SECRET_KEY=...
+TWELVEDATA_API_KEY=...
+FINNHUB_API_KEY=...
+FRED_API_KEY=...
+ALPHAVANTAGE_API_KEY=...
+NEWSAPI_KEY=...
+FRONTEND_URL=https://<your-frontend-domain>.up.railway.app
+```
+
+Generate a public domain: Service → **Settings** → **Networking** → **Generate domain**.
+
+> First API Docker build pulls Torch/ML deps and can take **15–30+ minutes** and a lot of disk/RAM. Upgrade the service if the build OOMs.
 
 ---
 
-## RAM note
+## 3. Frontend service
 
-Torch + NLP are heavy. If `geotrade-api` OOMs on **starter**, upgrade API (and worker) to **standard**.
+**+ New** → **GitHub Repo** → same `okay_f` again.
+
+### Settings
+| Setting | Value |
+|---------|--------|
+| Config-as-code path | `/frontend/railway.toml` |
+| Dockerfile path | `infra/docker/Dockerfile.frontend` |
+
+### Variables (Frontend — needed at **build** time)
+```
+VITE_API_URL=https://<your-api-domain>.up.railway.app/api/v1
+```
+
+Generate a public domain for the frontend, then put that URL into the API’s `FRONTEND_URL` and redeploy the API.
+
+---
+
+## 4. (Optional) Celery worker
+
+Same Dockerfile as API, start command `./scripts/start_worker.sh`, same DB/Redis/API key env vars. Without a worker, scheduled ingestion won’t run; many read APIs still work.
 
 ---
 
 ## Local check
 
 ```bash
-cp .env.example .env   # fill keys — never commit .env
-make up
-make migrate
-# API: http://localhost:8000/docs
-
+cp .env.example .env
+make up && make migrate
 cd frontend && pnpm install && pnpm dev
-# UI: http://localhost:5173
 ```
+
+- API: http://localhost:8000/docs  
+- UI: http://localhost:5173

@@ -10,8 +10,8 @@ RUN pnpm install --frozen-lockfile
 
 COPY frontend/ .
 
-# Bake API URL into the SPA at build time (override via --build-arg / Render dockerBuildArgs)
-ARG VITE_API_URL=https://geotrade-api.onrender.com/api/v1
+# Bake API URL into the SPA at build time (Railway/Render inject service env as Docker build ARGs)
+ARG VITE_API_URL=http://localhost:8000/api/v1
 ENV VITE_API_URL=$VITE_API_URL
 
 RUN pnpm build
