@@ -24,10 +24,12 @@ RUN python -m spacy download en_core_web_sm
 # ---- API target ----
 FROM base AS api
 COPY . .
+RUN chmod +x scripts/start_api.sh scripts/start_worker.sh scripts/start_beat.sh
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["./scripts/start_api.sh"]
 
 # ---- Worker target ----
 FROM base AS worker
 COPY . .
-CMD ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=4", "-Q", "ingestion,nlp,gti,default"]
+RUN chmod +x scripts/start_api.sh scripts/start_worker.sh scripts/start_beat.sh
+CMD ["./scripts/start_worker.sh"]

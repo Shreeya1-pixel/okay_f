@@ -60,6 +60,19 @@ services:
       - model_artifacts:/app/model_artifacts
     restart: unless-stopped
 
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+    container_name: geotrade_web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
   worker:
     build:
       context: .

@@ -1,3 +1,6 @@
+# GeoTrade — full stack on Render (API + workers + frontend + Postgres + Redis)
+# Dashboard: New → Blueprint → select this repo
+
 services:
   # ── FastAPI Backend ───────────────────────────────────────────────────────────
   - type: web
@@ -5,9 +8,10 @@ services:
     runtime: docker
     dockerfilePath: infra/docker/Dockerfile
     dockerContext: .
-    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
-    plan: starter          # upgrade to standard for more RAM (ML models need ~1 GB)
+    dockerCommand: ./scripts/start_api.sh
+    plan: starter          # upgrade to standard — ML models need ~1–2 GB RAM
     region: oregon
+    healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -34,9 +38,14 @@ services:
           property: connectionString
       - key: ENV
         value: production
+      - key: APP_ENV
+        value: production
       - key: LOG_LEVEL
         value: INFO
-      # ── add secret env vars in the Render dashboard ──
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: SECRET_KEY
+        generateValue: true
       - key: FINNHUB_API_KEY
         sync: false
       - key: FINNHUB_API_KEY_2
@@ -59,8 +68,22 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      # CORS — also allows *.onrender.com via regex in app code
       - key: FRONTEND_URL
-        sync: false   # set to your Vercel URL e.g. https://geotrade.vercel.app
+        value: https://geotrade-web.onrender.com
+
+  # ── Frontend (Vite SPA via nginx) ─────────────────────────────────────────────
+  - type: web
+    name: geotrade-web
+    runtime: docker
+    dockerfilePath: infra/docker/Dockerfile.frontend
+    dockerContext: .
+    plan: starter
+    region: oregon
+    # Render exposes service envVars as Docker build-time ARGs (no dockerBuildArgs field)
+    envVars:
+      - key: VITE_API_URL
+        value: https://geotrade-api.onrender.com/api/v1
 
   # ── Celery Worker ─────────────────────────────────────────────────────────────
   - type: worker
@@ -68,7 +91,7 @@ services:
     runtime: docker
     dockerfilePath: infra/docker/Dockerfile
     dockerContext: .
-    dockerCommand: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 -Q ingestion,nlp,gti,default
+    dockerCommand: ./scripts/start_worker.sh
     plan: starter
     region: oregon
     envVars:
@@ -97,15 +120,25 @@ services:
           property: connectionString
       - key: ENV
         value: production
+      - key: APP_ENV
+        value: production
+      - key: CELERY_CONCURRENCY
+        value: "1"
       - key: FINNHUB_API_KEY
         sync: false
       - key: FINNHUB_API_KEY_2
         sync: false
       - key: ALPACA_API_KEY
         sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
       - key: TWELVEDATA_API_KEY
         sync: false
       - key: NEWSAPI_KEY
+        sync: false
+      - key: FRED_API_KEY
+        sync: false
+      - key: ALPHAVANTAGE_API_KEY
         sync: false
 
   # ── Celery Beat Scheduler ─────────────────────────────────────────────────────
@@ -114,7 +147,7 @@ services:
     runtime: docker
     dockerfilePath: infra/docker/Dockerfile
     dockerContext: .
-    dockerCommand: celery -A app.tasks.celery_app beat --loglevel=info
+    dockerCommand: ./scripts/start_beat.sh
     plan: starter
     region: oregon
     envVars:
@@ -139,17 +172,18 @@ services:
           property: connectionString
       - key: ENV
         value: production
+      - key: APP_ENV
+        value: production
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  - type: redis
+    name: geotrade-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
 
 databases:
-  # ── TimescaleDB ───────────────────────────────────────────────────────────────
-  # Note: Render does not natively support TimescaleDB.
-  # Use the free tier of Neon (https://neon.tech) or Supabase for Postgres,
-  # or provision a custom Docker-based Postgres on Render.
   - name: geotrade-db
     databaseName: geotrade
     user: geotrade
-    plan: free            # upgrade for persistence beyond 90 days
-
-  # ── Redis ─────────────────────────────────────────────────────────────────────
-  - name: geotrade-redis
     plan: free

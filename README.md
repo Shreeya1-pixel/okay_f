@@ -33,6 +33,12 @@ Hypothetical **$100,000** paper portfolios and outcome logs live under **[`tradi
 
 *Not financial advice — demonstration only.*
 
+## Deploy (production)
+
+**All on Render** (manual Web Service / Worker / Postgres / Key Value — or Blueprint): frontend + API + workers.
+
+Step-by-step: **[DEPLOY.md](DEPLOY.md)**.
+
 ## Quick Start (Docker)
 1. Ensure Docker & Docker Compose are installed.
 2. Run infrastructure:

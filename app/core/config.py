@@ -3,10 +3,42 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _ensure_ssl_query(url: str) -> str:
+    """Add sslmode=require for non-local Postgres (Render/Neon/Supabase)."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in {"localhost", "127.0.0.1", "postgres"}:
+        return url
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if "sslmode" not in query and "ssl" not in query:
+        query["sslmode"] = "require"
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def _normalize_db_url(url: str, driver: str) -> str:
+    """Convert Render/Heroku-style postgres URLs to SQLAlchemy driver URLs."""
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    for prefix in (
+        "postgresql+asyncpg://",
+        "postgresql+psycopg2://",
+        "postgresql+psycopg://",
+    ):
+        if url.startswith(prefix):
+            url = "postgresql://" + url[len(prefix) :]
+            break
+    if url.startswith("postgresql://"):
+        url = f"postgresql+{driver}://" + url[len("postgresql://") :]
+    return _ensure_ssl_query(url)
 
 
 class Settings(BaseSettings):
@@ -15,10 +47,14 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        populate_by_name=True,
     )
 
-    # App
-    app_env: Literal["development", "staging", "production"] = "development"
+    # App — accept APP_ENV or ENV (Render/common PaaS)
+    app_env: Literal["development", "staging", "production"] = Field(
+        default="development",
+        validation_alias=AliasChoices("APP_ENV", "ENV"),
+    )
     app_version: str = "0.2.0"
     api_v1_str: str = "/api/v1"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -116,6 +152,34 @@ class Settings(BaseSettings):
         path = Path(v)
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_async_database_url(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return _normalize_db_url(v, "asyncpg")
+        return v
+
+    @field_validator("database_sync_url", mode="before")
+    @classmethod
+    def normalize_sync_database_url(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return _normalize_db_url(v, "psycopg2")
+        return v
+
+    @model_validator(mode="after")
+    def derive_sync_url_if_needed(self) -> Settings:
+        """If sync URL still looks like the async URL / bare postgres, normalize it."""
+        sync = self.database_sync_url
+        if "+asyncpg" in sync or (
+            sync.startswith("postgresql://") and "+psycopg" not in sync
+        ):
+            object.__setattr__(
+                self,
+                "database_sync_url",
+                _normalize_db_url(sync, "psycopg2"),
+            )
+        return self
 
     @property
     def is_production(self) -> bool:
