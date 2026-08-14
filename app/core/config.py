@@ -10,15 +10,19 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator, model_vali
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _ensure_ssl_query(url: str) -> str:
-    """Add sslmode=require for non-local Postgres (Render/Neon/Supabase)."""
+def _ensure_ssl_query(url: str, driver: str) -> str:
+    """Add SSL params for non-local Postgres. asyncpg wants ssl=; psycopg wants sslmode=."""
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
-    if host in {"localhost", "127.0.0.1", "postgres"}:
+    # Local / Docker Compose / Railway private network usually don't need SSL query args
+    if host in {"localhost", "127.0.0.1", "postgres"} or host.endswith(".railway.internal"):
         return url
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
     if "sslmode" not in query and "ssl" not in query:
-        query["sslmode"] = "require"
+        if driver == "asyncpg":
+            query["ssl"] = "require"
+        else:
+            query["sslmode"] = "require"
     return urlunparse(parsed._replace(query=urlencode(query)))
 
 
@@ -38,7 +42,7 @@ def _normalize_db_url(url: str, driver: str) -> str:
             break
     if url.startswith("postgresql://"):
         url = f"postgresql+{driver}://" + url[len("postgresql://") :]
-    return _ensure_ssl_query(url)
+    return _ensure_ssl_query(url, driver)
 
 
 class Settings(BaseSettings):
