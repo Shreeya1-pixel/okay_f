@@ -350,7 +350,11 @@ async def get_all_signals(
             "data_status": market.get("data_status", "unavailable"),
             "data_source": market.get("source", "unknown"),
             "analysis_basis": "observed_market_movement_and_verified_events",
-            "actionable": priced and act in ("BUY", "SELL"),
+            "actionable": (
+                priced
+                and act in ("BUY", "SELL")
+                and market.get("data_status") not in ("reference", "estimated")
+            ),
         }
         signals.append(sig)
 
@@ -472,7 +476,7 @@ def _analyze_action(
     action = "BUY" if score >= 0.35 else "SELL" if score <= -0.35 else "HOLD"
     freshness = {
         "live": 1.0, "delayed": 0.85, "stale": 0.55,
-        "unavailable": 0.0,
+        "reference": 0.35, "estimated": 0.35, "unavailable": 0.0,
     }.get(str(market.get("data_status") or "unavailable"), 0.7)
     confidence = min(0.95, (0.45 + abs(score) * 0.45) * freshness)
     if action == "HOLD":

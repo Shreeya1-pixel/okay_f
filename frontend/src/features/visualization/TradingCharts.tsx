@@ -14,6 +14,7 @@ import {
     RefreshCw, Filter, X, Info, Activity
 } from 'lucide-react'
 import { api } from '../../shared/api/client'
+import { TradingViewChart } from '@/shared/ui/TradingViewChart'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -344,6 +345,7 @@ function SignalDetail({ signal }: { signal: Signal }) {
                         {formatTs(signal.triggering_event.ts)}
                     </div>
                 </div>
+
             </div>
 
             {/* Tab bar */}
@@ -413,6 +415,14 @@ function SignalDetail({ signal }: { signal: Signal }) {
                                     <span className="text-emerald-400 font-mono">+{formatPrice(rewrd)}</span>
                                 </div>
                             </div>
+
+                            <TradingViewChart
+                                symbol={signal.symbol}
+                                label={signal.label}
+                                assetClass={signal.asset_class}
+                                category={signal.category}
+                                className="mt-3"
+                            />
 
                             {/* Warning */}
                             <div className="mt-3 p-2.5 rounded-lg bg-amber-500/8 border border-amber-500/20 flex gap-2">

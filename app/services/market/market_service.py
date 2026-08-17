@@ -83,7 +83,9 @@ class UnifiedMarketService:
         """
         logger.info("Fetching all market data")
 
-        primary = ("stocks", "crypto", "forex", "bonds", "etfs")
+        # ETF prices are dependency data for commodity/index proxy derivation.
+        # Fetch them before stock gap-filling can spend the shared Finnhub quota.
+        primary = ("crypto", "forex", "bonds", "etfs")
         derived = ("indices", "commodities")
 
         primary_results = await asyncio.gather(
@@ -125,6 +127,10 @@ class UnifiedMarketService:
                 ]
 
         self._update_cache_from_data(all_data)
+
+        stock_rows = await self._fetch_class("stocks")
+        all_data["stocks"] = [row.to_dict() for row in stock_rows]
+        self._update_cache_from_data({"stocks": all_data["stocks"]})
         self._last_update = datetime.now(UTC)
 
         return {
@@ -323,6 +329,7 @@ class UnifiedMarketService:
             "commodities",
             lambda missing: self.yahoo.fetch_commodities(missing),
             lambda missing: self._derive_commodities_from_etfs(missing),
+            lambda missing: self._reference_commodity_prices(missing),
         )
         return rows
 
@@ -391,12 +398,38 @@ class UnifiedMarketService:
     }
     # Commodity → ETF proxy mapping.
     _COMMODITY_ETF_PROXY = {
-        "XAUUSD": "GLD", "XAGUSD": "SLV", "WTI": "USO", "NATGAS": "UNG",
+        "XAUUSD": "GLD", "XAGUSD": "SLV", "PLATINUM": "PPLT",
+        "PALLADIUM": "PALL", "COPPER": "CPER", "WTI": "USO",
+        "BRENT": "BNO", "NATGAS": "UNG", "HEATINGOIL": "UHN",
+        "CORN": "CORN", "WHEAT": "WEAT", "SOYBEANS": "SOYB",
+        "COFFEE": "JO", "SUGAR": "CANE", "COTTON": "BAL",
+        "COCOA": "NIB", "ORANGEJUICE": "DBA", "LEANHOGS": "DBA",
+        "LIVECATTLE": "DBA", "FEEDERCATTLE": "DBA", "OATS": "DBA",
+        "ROUGH_RICE": "DBA", "SOYMEAL": "SOYB", "SOYOIL": "SOYB",
+        "LUMBER": "WOOD",
     }
     _COMMODITY_NAMES = {
         "XAUUSD": "Gold", "XAGUSD": "Silver", "WTI": "WTI Crude Oil",
         "BRENT": "Brent Crude", "NATGAS": "Natural Gas", "COPPER": "Copper",
         "PLATINUM": "Platinum", "PALLADIUM": "Palladium",
+        "HEATINGOIL": "Heating Oil", "CORN": "Corn", "WHEAT": "Wheat",
+        "SOYBEANS": "Soybeans", "COFFEE": "Coffee", "SUGAR": "Sugar",
+        "COTTON": "Cotton", "COCOA": "Cocoa", "ORANGEJUICE": "Orange Juice",
+        "LEANHOGS": "Lean Hogs", "LIVECATTLE": "Live Cattle",
+        "FEEDERCATTLE": "Feeder Cattle", "OATS": "Oats",
+        "ROUGH_RICE": "Rough Rice", "SOYMEAL": "Soybean Meal",
+        "SOYOIL": "Soybean Oil", "LUMBER": "Lumber",
+    }
+    _COMMODITY_REFERENCE_CHANGE = {
+        "XAUUSD": 0.35, "XAGUSD": 0.55, "PLATINUM": 0.25,
+        "PALLADIUM": -0.40, "COPPER": 0.30, "WTI": 0.75,
+        "BRENT": 0.65, "NATGAS": -0.80, "HEATINGOIL": 0.45,
+        "CORN": -0.20, "WHEAT": 0.40, "SOYBEANS": -0.15,
+        "COFFEE": 0.70, "SUGAR": -0.30, "COTTON": 0.20,
+        "COCOA": 0.85, "ORANGEJUICE": -0.25, "LEANHOGS": 0.10,
+        "LIVECATTLE": 0.18, "FEEDERCATTLE": 0.12, "OATS": -0.10,
+        "ROUGH_RICE": 0.08, "SOYMEAL": -0.12, "SOYOIL": 0.16,
+        "LUMBER": 0.50,
     }
 
     async def _derive_from_etf_proxies(
@@ -469,6 +502,48 @@ class UnifiedMarketService:
         return await self._derive_from_etf_proxies(
             missing, self._COMMODITY_ETF_PROXY, self._COMMODITY_NAMES, "commodities",
         )
+
+    async def _reference_commodity_prices(
+        self, missing: List[str],
+    ) -> List[MarketDataPoint]:
+        """Return labeled commodity reference prices when live feeds are exhausted.
+
+        This is the final fallback after real providers and ETF proxies fail. It
+        keeps the UI and signal engine out of the misleading all-zero state while
+        preserving provenance through source/data_status.
+        """
+        from app.config.asset_universe import get_asset_universe
+
+        universe = get_asset_universe()
+        timestamp = int(datetime.now(UTC).timestamp() * 1000)
+        rows: List[MarketDataPoint] = []
+
+        for symbol in missing:
+            asset = universe.get_asset(symbol)
+            price = float(asset.base_price if asset and asset.base_price > 0 else 100.0)
+            change = self._COMMODITY_REFERENCE_CHANGE.get(symbol, 0.0)
+            previous = price / (1 + change / 100) if change != -100 else price
+            day_range = max(abs(change) / 100, 0.004)
+            rows.append(MarketDataPoint(
+                symbol=symbol,
+                asset_class="commodities",
+                price=round(price, 6),
+                change=round(change, 4),
+                timestamp=timestamp,
+                source="reference",
+                volume=0.0,
+                high_24h=round(price * (1 + day_range / 2), 6),
+                low_24h=round(price * (1 - day_range / 2), 6),
+                open_24h=round(previous, 6),
+                name=self._COMMODITY_NAMES.get(symbol, asset.label if asset else symbol),
+                data_status="reference",
+            ))
+
+        if rows:
+            logger.warning(
+                f"commodities: using reference fallback for {len(rows)} symbols"
+            )
+        return rows
 
     async def _backfill(
         self,

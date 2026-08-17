@@ -147,6 +147,40 @@ async def test_backfill_marks_unpriceable_symbols_unavailable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fetch_commodities_uses_reference_fallback_when_providers_fail(monkeypatch) -> None:
+    """Commodity rows should not collapse to zero when upstreams are throttled."""
+    service = UnifiedMarketService()
+
+    symbols = ["WTI", "COPPER"]
+
+    async def primary(_symbols):
+        return [
+            MarketDataPoint.unavailable(symbol, "commodities", "twelvedata")
+            for symbol in _symbols
+        ]
+
+    async def yahoo(_missing):
+        return []
+
+    async def etf_proxy(_missing):
+        return []
+
+    monkeypatch.setattr(service.commodities, "get_default_symbols", lambda: symbols)
+    monkeypatch.setattr(service.commodities, "fetch_prices", primary)
+    monkeypatch.setattr(service.yahoo, "fetch_commodities", yahoo)
+    monkeypatch.setattr(service, "_derive_commodities_from_etfs", etf_proxy)
+
+    rows = await service._fetch_commodities()
+
+    assert [row.symbol for row in rows] == symbols
+    assert all(row.status == "ok" for row in rows)
+    assert all(row.price > 0 for row in rows)
+    assert all(row.source == "reference" for row in rows)
+    assert all(row.data_status == "reference" for row in rows)
+    assert any(row.change != 0 for row in rows)
+
+
+@pytest.mark.asyncio
 async def test_fetch_class_reuses_recent_result(monkeypatch) -> None:
     """Repeated calls inside the TTL hit the provider once."""
     service = UnifiedMarketService()
